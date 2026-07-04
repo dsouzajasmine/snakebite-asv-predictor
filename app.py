@@ -44,8 +44,6 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 
-API_KEY = "AIzaSyAqpVCOiPMZGhSFupM_MgqRNCdXXUznNI0"
-
 def login_page():
 
     st.title("Snakebite ASV Severity Predictor")
