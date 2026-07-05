@@ -49,7 +49,7 @@ db = firestore.client()
 
 def login_page():
 
-    st.title("Snakebite ASV Severity Predictor")
+    st.title("Sakebite ASV Severity Predictor")
     st.caption("AI-Based Clinical Decision Support System")
 
     st.subheader("Login")
