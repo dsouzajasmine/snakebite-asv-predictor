@@ -2,170 +2,64 @@ import streamlit as st
 import pandas as pd
 import joblib
 import requests
-
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
-
 from reportlab.platypus import SimpleDocTemplate, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
-
 from datetime import datetime
+import plotly.express as px
 
-# -------------------------------
-# Session State
-# -------------------------------
-if "page" not in st.session_state:
-    st.session_state.page = "login"
+# ── Page Config ──────────────────────────────────────
+st.set_page_config(
+    page_title = "Snakebite ASV Predictor",
+    layout     = "wide"
+)
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+# ── Session State ────────────────────────────────────
+if "page"       not in st.session_state: st.session_state.page       = "login"
+if "logged_in"  not in st.session_state: st.session_state.logged_in  = False
+if "user_email" not in st.session_state: st.session_state.user_email = ""
+if "user_name"  not in st.session_state: st.session_state.user_name  = ""
+if "user_id"    not in st.session_state: st.session_state.user_id    = ""
 
-if "user_email" not in st.session_state:
-    st.session_state.user_email = ""
-
-if "user_name" not in st.session_state:
-    st.session_state.user_name = ""
-
-if "user_id" not in st.session_state:
-    st.session_state.user_id = ""
-
-model = joblib.load('asv_model.pkl')
+# ── Load Model ───────────────────────────────────────
+model        = joblib.load('asv_model.pkl')
 feature_list = joblib.load('model_features.pkl')
 
-# Initialize Firebase only once
+# ── Firebase Init ────────────────────────────────────
 if not firebase_admin._apps:
-    # Check if running on Streamlit Cloud (secrets) or locally (json file)
     try:
-        # Streamlit Cloud — read from secrets
         firebase_cred = dict(st.secrets["firebase_key"])
         cred = credentials.Certificate(firebase_cred)
     except:
-        # Local VS Code — read from json file
         cred = credentials.Certificate('firebase_key.json')
-    
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
 
-def login_page():
-
-    st.title("Snakebite ASV Severity Predictor")
-    st.caption("AI-Based Clinical Decision Support System")
-
-    st.subheader("Login")
-
-    email = st.text_input("Email")
-
-    password = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-
-        response = login_user(email, password)
-
-        if response.status_code == 200:
-
-            user = auth.get_user_by_email(email)
-
-            st.session_state.logged_in = True
-            st.session_state.user_email = email
-            st.session_state.user_name = user.display_name
-            st.session_state.user_id = user.uid
-            st.session_state.page = "predict"
-            
-            st.success(f"Welcome, {user.display_name}!")
-
-            st.rerun()
-
-        else:
-
-            st.error("Invalid Email or Password")
-
-    st.write("Don't have an account?")
-
-    if st.button("Register"):
-        st.session_state.page = "register"
-        st.rerun()
-
-def login_user(email, password):
+# ── Helper: Get API Key ──────────────────────────────
+def get_api_key():
     try:
-        api_key = st.secrets["firebase_key"]["api_key"]
+        return st.secrets["firebase_key"]["api_key"]
     except:
-        api_key = "your-local-api-key"  # for local testing
-    
-    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
-    payload = {
-        "email": email,
-        "password": password,
-        "returnSecureToken": True
-    }
-    response = requests.post(url, json=payload)
-    return response
+        return ""
 
-def register_page():
+# ── Helper: Login User ───────────────────────────────
+def login_user(email, password):
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={get_api_key()}"
+    payload = {"email": email, "password": password, "returnSecureToken": True}
+    return requests.post(url, json=payload)
 
-    st.title("Snakebite ASV Severity Predictor")
-    st.caption("AI-Based Clinical Decision Support System")
-
-    st.subheader("Create Account")
-
-    name = st.text_input("Full Name")
-
-    email = st.text_input("Email")
-
-    password = st.text_input("Password", type="password")
-
-    confirm_password = st.text_input("Confirm Password", type="password")
-
-    if st.button("Create Account"):
-
-        # Check if all fields are filled
-        if name == "" or email == "" or password == "" or confirm_password == "":
-            st.error("Please fill all fields.")
-
-        # Check if passwords match
-        elif password != confirm_password:
-            st.error("Passwords do not match!")
-
-        else:
-            try:
-                # Create user in Firebase Authentication
-                user = auth.create_user(
-                    email=email,
-                    password=password,
-                    display_name=name
-                )
-
-                # Save user details in Firestore
-                db.collection("users").document(user.uid).set({
-                    "name": name,
-                    "email": email
-                })
-
-                st.success("Account created successfully!")
-                st.info("Please go back and login.")
-
-            except Exception as e:
-                st.error(f"Registration failed: {e}")
-
-    if st.button("Back to Login"):
-        st.session_state.page = "login"
-        st.rerun()
-
+# ── Helper: Create PDF ───────────────────────────────
 def create_pdf(patient_name, gender, age_group, snake,
                hb, platelets, pt, inr, aptt, urea,
-               creatinine, sgot, sgpt, crp,
-               severity, asv):
-
+               creatinine, sgot, sgpt, crp, severity, asv):
     pdf_file = "Snakebite_Report.pdf"
-
-    doc = SimpleDocTemplate(pdf_file)
-    styles = getSampleStyleSheet()
-
+    doc      = SimpleDocTemplate(pdf_file)
+    styles   = getSampleStyleSheet()
     elements = []
-
     elements.append(Paragraph("<b>SNAKEBITE ASV SEVERITY REPORT</b>", styles["Title"]))
     elements.append(Paragraph("<br/>", styles["Normal"]))
-
     elements.append(Paragraph("<b>PATIENT DETAILS</b>", styles["Heading2"]))
     if patient_name.strip():
         elements.append(Paragraph(f"<b>Patient Name:</b> {patient_name}", styles["Normal"]))
@@ -173,9 +67,8 @@ def create_pdf(patient_name, gender, age_group, snake,
     elements.append(Paragraph(f"<b>Age Group:</b> {age_group}", styles["Normal"]))
     elements.append(Paragraph(f"<b>Snake:</b> {snake}", styles["Normal"]))
     elements.append(Paragraph("<br/>", styles["Normal"]))
-
     elements.append(Paragraph("<b>LAB SUMMARY</b>", styles["Heading2"]))
-    elements.append(Paragraph(f"<b>Hemoglobin (Hb):</b> {hb}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Hb:</b> {hb}", styles["Normal"]))
     elements.append(Paragraph(f"<b>Platelets:</b> {platelets}", styles["Normal"]))
     elements.append(Paragraph(f"<b>PT:</b> {pt}", styles["Normal"]))
     elements.append(Paragraph(f"<b>INR:</b> {inr}", styles["Normal"]))
@@ -185,257 +78,367 @@ def create_pdf(patient_name, gender, age_group, snake,
     elements.append(Paragraph(f"<b>SGOT:</b> {sgot}", styles["Normal"]))
     elements.append(Paragraph(f"<b>SGPT:</b> {sgpt}", styles["Normal"]))
     elements.append(Paragraph(f"<b>CRP:</b> {crp}", styles["Normal"]))
-
     elements.append(Paragraph("<br/>", styles["Normal"]))
-
     elements.append(Paragraph("<b>PREDICTION RESULT</b>", styles["Heading2"]))
     elements.append(Paragraph(f"<b>Predicted Severity:</b> {severity}", styles["Normal"]))
     elements.append(Paragraph(f"<b>Recommended ASV:</b> {asv}", styles["Normal"]))
     elements.append(Paragraph("<br/>", styles["Normal"]))
-
-    current_datetime = datetime.now().strftime("%d %B %Y %I:%M %p")
-    elements.append(Paragraph(f"<b>Generated On:</b> {current_datetime}", styles["Normal"]))
-
+    elements.append(Paragraph(f"<b>Generated On:</b> {datetime.now().strftime('%d %B %Y %I:%M %p')}", styles["Normal"]))
     elements.append(Paragraph("<br/>", styles["Normal"]))
-
-    elements.append(Paragraph(
-        "This report is generated by the Snakebite ASV Severity Predictor. "
-        "It is intended only as a clinical decision support tool.",
-        styles["Italic"]
-    ))
-
+    elements.append(Paragraph("This report is generated by the Snakebite ASV Severity Predictor. It is intended only as a clinical decision support tool.", styles["Italic"]))
     doc.build(elements)
-
     return pdf_file
 
-def predictor_page():
-    st.title("Snakebite ASV Severity Predictor")
-    st.caption("AI-Based Clinical Decision Support System")
+# ── Sidebar ──────────────────────────────────────────
+def show_sidebar():
+    with st.sidebar:
+        st.title("ASV Predictor")
+        st.divider()
 
-    col1, col2 = st.columns([5, 1])
+        # User info
+        st.write(f"👤 **{st.session_state.user_name}**")
+        st.write(f"📧 {st.session_state.user_email}")
+        st.divider()
 
-    with col1:
-        st.write(f"👋 Welcome, **{st.session_state.user_name}**")
+        # Navigation
+        st.subheader("Navigation")
 
-    with col2:
-        if st.button("🚪 Logout"):
-            st.session_state.logged_in = False
+        if st.button("🔍 Predict", use_container_width=True):
+            st.session_state.page = "predict"
+            st.rerun()
+
+        if st.button("📊 Dashboard", use_container_width=True):
+            st.session_state.page = "dashboard"
+            st.rerun()
+
+        if st.button("📜 Prediction History", use_container_width=True):
+            st.session_state.page = "history"
+            st.rerun()
+
+        st.divider()
+
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.logged_in  = False
             st.session_state.user_email = ""
-            st.session_state.user_name = ""
+            st.session_state.user_name  = ""
+            st.session_state.user_id    = ""
+            st.session_state.page       = "login"
+            st.rerun()
+
+# ── Login Page ───────────────────────────────────────
+def login_page():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("Snakebite ASV Predictor")
+        st.caption("AI-Based Clinical Decision Support System")
+        st.divider()
+        st.subheader("Login")
+        email    = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login", use_container_width=True):
+            response = login_user(email, password)
+            if response.status_code == 200:
+                user = auth.get_user_by_email(email)
+                st.session_state.logged_in  = True
+                st.session_state.user_email = email
+                st.session_state.user_name  = user.display_name
+                st.session_state.user_id    = user.uid
+                st.session_state.page       = "predict"
+                st.success(f"Welcome, {user.display_name}!")
+                st.rerun()
+            else:
+                st.error("Invalid Email or Password!")
+
+        st.write("Don't have an account?")
+        if st.button("Register here", use_container_width=True):
+            st.session_state.page = "register"
+            st.rerun()
+
+# ── Register Page ────────────────────────────────────
+def register_page():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("Snakebite ASV Predictor")
+        st.caption("AI-Based Clinical Decision Support System")
+        st.divider()
+        st.subheader("Create Account")
+        name             = st.text_input("Full Name")
+        email            = st.text_input("Email")
+        password         = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
+
+        if st.button("Create Account", use_container_width=True):
+            if not name or not email or not password or not confirm_password:
+                st.error("Please fill all fields!")
+            elif password != confirm_password:
+                st.error("Passwords do not match!")
+            elif len(password) < 6:
+                st.error("Password must be at least 6 characters!")
+            else:
+                try:
+                    user = auth.create_user(
+                        email        = email,
+                        password     = password,
+                        display_name = name
+                    )
+                    db.collection("users").document(user.uid).set({
+                        "name" : name,
+                        "email": email
+                    })
+                    st.success("✅ Account created successfully! Please login.")
+                    st.session_state.page = "login"
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Registration failed: {e}")
+
+        if st.button("Back to Login", use_container_width=True):
             st.session_state.page = "login"
             st.rerun()
 
-    if st.button("📜 View Prediction History"):
-        st.session_state.page = "history"
-        st.rerun()
+# ── Predict Page ─────────────────────────────────────
+def predict_page():
+    show_sidebar()
+    st.title("🔍 ASV Severity Prediction")
+    st.caption("Enter patient details to predict ASV severity")
+    st.divider()
 
-    # Rest of your prediction code starts here...
+    col1, col2 = st.columns(2)
 
-    st.write("Enter patient details to predict ASV severity category")
+    with col1:
+        st.subheader("Patient Information")
+        patient_name = st.text_input("Patient Name (Optional)")
+        gender       = st.selectbox("Gender", ["Male", "Female"])
+        age_cat      = st.selectbox("Age Group", [
+            '1-10 years', '11-20 years', '21-30 years', '31-40 years',
+            '41-50 years', '51-60 years', '>60 years'
+        ])
+        snake = st.selectbox("Snake Identified", [
+            'Not Identified', 'Cobra', 'Krait', 'Viper', 'Python',
+            'Rat Snake', 'Wolf Snake', 'Trinket', 'Humped Nose Viper',
+            'Green Vine Snake', 'Sand Boa', 'Cat Snake'
+        ])
+        wbct        = st.selectbox("20 Minute WBCT Result", ["Clotted", "Not Clotted"])
+        local_ss    = st.selectbox("Local Signs and Symptoms", ["Yes", "No"])
+        systemic_ss = st.selectbox("Systemic Signs and Symptoms", ["Yes", "No"])
 
-    st.header("Patient Information")
+    with col2:
+        st.subheader("Lab Values")
+        hb         = st.number_input("Hemoglobin (Hb)", value=12.0, step=0.1)
+        platelets  = st.number_input("Platelets", value=250.0, step=1.0)
+        pt         = st.number_input("PT", value=13.0, step=0.1)
+        inr        = st.number_input("INR", value=1.0, step=0.1)
+        aptt       = st.number_input("aPTT", value=30.0, step=0.1)
+        urea       = st.number_input("Urea", value=25.0, step=1.0)
+        creatinine = st.number_input("Creatinine", value=1.0, step=0.1)
+        sgot       = st.number_input("SGOT", value=30.0, step=1.0)
+        sgpt       = st.number_input("SGPT", value=30.0, step=1.0)
+        crp        = st.number_input("CRP", value=5.0, step=0.1)
 
-    patient_name = st.text_input("Patient Name (Optional)")
+    st.divider()
 
-    gender = st.selectbox("Gender", ["Male", "Female"])
-
-    age_cat = st.selectbox("Age Group", [
-        '1-10 years', '11-20 years', '21-30 years', '31-40 years',
-        '41-50 years', '51-60 years', '>60 years'
-    ])
-
-    snake = st.selectbox("Snake Identified", [
-        'Not Identified', 'Cobra', 'Krait', 'Viper', 'Python',
-        'Rat Snake', 'Wolf Snake', 'Trinket', 'Humped Nose Viper',
-        'Green Vine Snake', 'Sand Boa', 'Cat Snake'
-    ])
-
-    wbct = st.selectbox("20 Minute WBCT Result", ["Clotted", "Not Clotted"])
-
-    local_ss = st.selectbox("Local Signs and Symptoms", ["Yes", "No"])
-
-    systemic_ss = st.selectbox("Systemic Signs and Symptoms", ["Yes", "No"])
-
-    st.header("Lab Values")
-
-    hb = st.number_input("Hemoglobin (Hb)", value=12.0, step=0.1)
-    platelets = st.number_input("Platelets", value=250.0, step=1.0)
-    pt = st.number_input("PT (Prothrombin Time)", value=13.0, step=0.1)
-    inr = st.number_input("INR", value=1.0, step=0.1)
-    aptt = st.number_input("aPTT", value=30.0, step=0.1)
-    urea = st.number_input("Urea", value=25.0, step=1.0)
-    creatinine = st.number_input("Creatinine", value=1.0, step=0.1)
-    sgot = st.number_input("SGOT", value=30.0, step=1.0)
-    sgpt = st.number_input("SGPT", value=30.0, step=1.0)
-    crp = st.number_input("CRP", value=5.0, step=0.1)
-
-    if st.button("Predict ASV Severity"):
-
+    if st.button("🔍 Predict ASV Severity", use_container_width=True):
         input_dict = {
             'Hb': hb, 'Platelets': platelets, 'PT': pt, 'INR': inr,
             'aPTT': aptt, 'Urea': urea, 'Creatinine': creatinine,
             'SGOT': sgot, 'SGPT': sgpt, 'CRP': crp,
-            'Gender(1,2)': gender,
-            'Age (Cat)': age_cat,
-            'Snake identified': snake,
-            '20WBCT': wbct,
-            'Local S/S': local_ss,
-            'Systemic s/s': systemic_ss
+            'Gender(1,2)': gender, 'Age (Cat)': age_cat,
+            'Snake identified': snake, '20WBCT': wbct,
+            'Local S/S': local_ss, 'Systemic s/s': systemic_ss
         }
 
-    
-
-        input_df = pd.DataFrame([input_dict])
+        input_df      = pd.DataFrame([input_dict])
         input_encoded = pd.get_dummies(input_df)
+        final_input   = pd.DataFrame(columns=feature_list)
+        final_input   = pd.concat([final_input, input_encoded], ignore_index=True)
+        final_input   = final_input.reindex(columns=feature_list, fill_value=0)
+        final_input   = final_input.fillna(0)
+        final_input   = final_input.apply(pd.to_numeric, errors='coerce').fillna(0)
 
-        final_input = pd.DataFrame(columns=feature_list)
-        final_input = pd.concat([final_input, input_encoded], ignore_index=True)
-        final_input = final_input.reindex(columns=feature_list, fill_value=0)
-        final_input = final_input.fillna(0)
-
-        # Convert all columns to numeric
-        final_input = final_input.apply(pd.to_numeric, errors='coerce').fillna(0)
-
-        # Get prediction
-        prediction = model.predict(final_input)[0]
-
-        # Get probabilities for each category
+        prediction    = model.predict(final_input)[0]
         probabilities = model.predict_proba(final_input)[0]
-
-        severity_map = {0: 'None', 1: 'Low', 2: 'Moderate', 3: 'High'}
-        result = severity_map[prediction]
-
-        vial_ranges = {
-            'None'     : '0 vials',
-            'Low'      : '10–15 vials',
-            'Moderate' : '20–30 vials',
-            'High'     : '35–55 vials'
+        severity_map  = {0: 'None', 1: 'Low', 2: 'Moderate', 3: 'High'}
+        result        = severity_map[prediction]
+        vial_ranges   = {
+            'None'    : '0 vials',
+            'Low'     : '10–15 vials',
+            'Moderate': '20–30 vials',
+            'High'    : '35–55 vials'
         }
 
+        st.divider()
         st.header("Prediction Result")
 
-        if result == 'None':
-            st.success(f"Predicted Severity: **{result}**")
-            st.info("💉 Recommended ASV: **0 vials** — No envenomation, observation only")
-        elif result == 'Low':
-            st.info(f"Predicted Severity: **{result}** — Mild envenomation")
-            st.warning(f"💉 Recommended ASV: **{vial_ranges[result]}** — Monitor closely after each dose")
-        elif result == 'Moderate':
-            st.warning(f"Predicted Severity: **{result}** — Moderate envenomation")
-            st.warning(f"💉 Recommended ASV: **{vial_ranges[result]}** — Reassess after every 10 vials")
-        else:
-            st.error(f"Predicted Severity: **{result}** — Severe envenomation!")
-            st.error(f"💉 Recommended ASV: **{vial_ranges[result]}** — ICU monitoring required, reassess frequently")
+        col1, col2 = st.columns(2)
 
-        # Show probability breakdown
-        st.header("Model Confidence")
-        st.write("How confident is the model about each severity level?")
+        with col1:
+            if result == 'None':
+                st.success(f"### Predicted Severity: {result}")
+                st.info("💉 Recommended ASV: **0 vials**\nNo envenomation, observation only")
+            elif result == 'Low':
+                st.info(f"### Predicted Severity: {result}")
+                st.warning(f"💉 Recommended ASV: **{vial_ranges[result]}**\nMonitor closely after each dose")
+            elif result == 'Moderate':
+                st.warning(f"### Predicted Severity: {result}")
+                st.warning(f"💉 Recommended ASV: **{vial_ranges[result]}**\nReassess after every 10 vials")
+            else:
+                st.error(f"### Predicted Severity: {result}")
+                st.error(f"💉 Recommended ASV: **{vial_ranges[result]}**\nICU monitoring required!")
 
-        prob_df = pd.DataFrame({
-            'Severity' : ['None', 'Low', 'Moderate', 'High'],
-            'Confidence (%)' : [round(float(p) * 100, 1) for p in probabilities]
-        })
+        with col2:
+            st.subheader("Model Confidence")
+            prob_df = pd.DataFrame({
+                'Severity'      : ['None', 'Low', 'Moderate', 'High'],
+                'Confidence (%)': [round(float(p) * 100, 1) for p in probabilities]
+            })
+            for _, row in prob_df.iterrows():
+                st.progress(
+                    int(row['Confidence (%)']),
+                    text=f"{row['Severity']} : {row['Confidence (%)']:.1f}%"
+                )
 
-        for _, row in prob_df.iterrows():
-            st.progress(
-                int(row['Confidence (%)']),
-                text=f"{row['Severity']} : {row['Confidence (%)']}%"
-            )
-
-        # Save prediction to Firestore
+        # Save to Firestore
         db.collection("predictions").add({
-            "user_email": st.session_state.user_email,
-            "user_name": st.session_state.user_name,
-            "gender": gender,
-            "age_group": age_cat,
-            "snake": snake,
-            "severity": result,
+            "user_email"     : st.session_state.user_email,
+            "user_name"      : st.session_state.user_name,
+            "patient_name"   : patient_name,
+            "gender"         : gender,
+            "age_group"      : age_cat,
+            "snake"          : snake,
+            "wbct"           : wbct,
+            "local_ss"       : local_ss,
+            "systemic_ss"    : systemic_ss,
+            "severity"       : result,
             "recommended_asv": vial_ranges[result],
-            "timestamp": firestore.SERVER_TIMESTAMP
+            "timestamp"      : firestore.SERVER_TIMESTAMP
         })
 
-        pdf_path = create_pdf(
-        patient_name,
-        gender,
-        age_cat,
-        snake,
-        hb,
-        platelets,
-        pt,
-        inr,
-        aptt,
-        urea,
-        creatinine,
-        sgot,
-        sgpt,
-        crp,
-        result,
-        vial_ranges[result]
-        )
+        st.success("✅ Prediction saved to history!")
 
+        # PDF Download
+        pdf_path = create_pdf(
+            patient_name, gender, age_cat, snake,
+            hb, platelets, pt, inr, aptt, urea,
+            creatinine, sgot, sgpt, crp,
+            result, vial_ranges[result]
+        )
         with open(pdf_path, "rb") as pdf_file:
             st.download_button(
-                label="📄 Download Prediction Report",
-                data=pdf_file,
-                file_name="Snakebite_ASV_Report.pdf",
-                mime="application/pdf"
+                label     = "📄 Download Prediction Report",
+                data      = pdf_file,
+                file_name = "Snakebite_ASV_Report.pdf",
+                mime      = "application/pdf"
             )
 
         st.caption("⚠️ This is a decision support tool only. Final dosage must be determined by a qualified physician.")
 
+# ── Dashboard Page ───────────────────────────────────
+def dashboard_page():
+    show_sidebar()
+    st.title("📊 Dashboard")
+    st.caption("Analytics of your predictions")
+    st.divider()
+
+    # Get all predictions of this user
+    docs = db.collection("predictions")\
+             .where("user_email", "==", st.session_state.user_email)\
+             .stream()
+
+    records = [doc.to_dict() for doc in docs]
+
+    if not records:
+        st.info("No predictions yet! Make a prediction first.")
+        return
+
+    df_hist = pd.DataFrame(records)
+
+    # Metrics
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Predictions", len(df_hist))
+    col2.metric("High Severity",     len(df_hist[df_hist['severity'] == 'High']))
+    col3.metric("Moderate Severity", len(df_hist[df_hist['severity'] == 'Moderate']))
+    col4.metric("No ASV Needed",     len(df_hist[df_hist['severity'] == 'None']))
+
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Severity pie chart
+        severity_counts = df_hist['severity'].value_counts().reset_index()
+        severity_counts.columns = ['Severity', 'Count']
+        fig = px.pie(
+            severity_counts,
+            names  = 'Severity',
+            values = 'Count',
+            title  = 'Severity Distribution',
+            color_discrete_map = {
+                'None'    : 'steelblue',
+                'Low'     : 'green',
+                'Moderate': 'orange',
+                'High'    : 'red'
+            }
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        # Snake type bar chart
+        snake_counts = df_hist['snake'].value_counts().reset_index()
+        snake_counts.columns = ['Snake', 'Count']
+        fig2 = px.bar(
+            snake_counts,
+            x     = 'Snake',
+            y     = 'Count',
+            title = 'Snake Types in Your Predictions',
+            color = 'Count',
+            color_continuous_scale = 'Reds'
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+# ── History Page ─────────────────────────────────────
 def history_page():
+    show_sidebar()
+    st.title("📜 Prediction History")
+    st.caption("Your last predictions")
+    st.divider()
 
-    st.title("Prediction History")
+    docs = db.collection("predictions")\
+             .where("user_email", "==", st.session_state.user_email)\
+             .stream()
 
-    if st.button("⬅ Back to Prediction"):
-        st.session_state.page = "predict"
-        st.rerun()
+    records = [doc.to_dict() for doc in docs]
 
-    st.write(f"Logged in as: **{st.session_state.user_name}**")
-
-    # Get all predictions of the logged-in user
-    docs = db.collection("predictions") \
-            .where("user_email", "==", st.session_state.user_email) \
-            .stream()
-
-    found = False
-
-    for doc in docs:
-
-        found = True
-
-        data = doc.to_dict()
-
-        st.subheader(f"🐍 {data['snake']}")
-
-        st.write(f"**Severity:** {data['severity']}")
-        st.write(f"**Recommended ASV:** {data['recommended_asv']}")
-
-        if data.get("timestamp"):
-            st.write(f"**Date:** {data['timestamp']}")
-
-        st.divider()
-
-    if not found:
+    if not records:
         st.info("No prediction history found.")
+        return
 
-if st.session_state.page == "login":
-    login_page()
+    for i, data in enumerate(records, 1):
+        with st.expander(f"Prediction {i} — {data.get('snake', 'N/A')} — Severity: {data.get('severity', 'N/A')}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Patient:** {data.get('patient_name', 'Not provided')}")
+                st.write(f"**Gender:** {data.get('gender', 'N/A')}")
+                st.write(f"**Age Group:** {data.get('age_group', 'N/A')}")
+                st.write(f"**Snake:** {data.get('snake', 'N/A')}")
+                st.write(f"**WBCT:** {data.get('wbct', 'N/A')}")
+            with col2:
+                st.write(f"**Severity:** {data.get('severity', 'N/A')}")
+                st.write(f"**Recommended ASV:** {data.get('recommended_asv', 'N/A')}")
+                if data.get('timestamp'):
+                    st.write(f"**Date:** {data.get('timestamp')}")
 
-elif st.session_state.page == "register":
-    register_page()
-
-elif st.session_state.page == "predict":
-    if st.session_state.logged_in:
-        predictor_page()
+# ── Router ────────────────────────────────────────────
+if not st.session_state.logged_in:
+    if st.session_state.page == "register":
+        register_page()
     else:
-        st.session_state.page = "login"
-        st.rerun()
-
-elif st.session_state.page == "history":
-
-    if st.session_state.logged_in:
+        login_page()
+else:
+    if st.session_state.page == "predict":
+        predict_page()
+    elif st.session_state.page == "dashboard":
+        dashboard_page()
+    elif st.session_state.page == "history":
         history_page()
     else:
-        st.session_state.page = "login"
-        st.rerun()
+        predict_page()

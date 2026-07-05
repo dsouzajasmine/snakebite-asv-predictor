@@ -220,3 +220,5 @@ __marimo__/
 *.json
 
 Snakebite_Report.pdf
+
+.streamlit/secrets.toml
