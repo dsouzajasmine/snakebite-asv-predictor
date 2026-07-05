@@ -26,6 +26,9 @@ if "user_email" not in st.session_state:
 if "user_name" not in st.session_state:
     st.session_state.user_name = ""
 
+if "user_id" not in st.session_state:
+    st.session_state.user_id = ""
+
 model = joblib.load('asv_model.pkl')
 feature_list = joblib.load('model_features.pkl')
 
@@ -66,8 +69,9 @@ def login_page():
             st.session_state.logged_in = True
             st.session_state.user_email = email
             st.session_state.user_name = user.display_name
+            st.session_state.user_id = user.uid
             st.session_state.page = "predict"
-
+            
             st.success(f"Welcome, {user.display_name}!")
 
             st.rerun()
@@ -83,17 +87,18 @@ def login_page():
         st.rerun()
 
 def login_user(email, password):
-
-    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={API_KEY}"
-
+    try:
+        api_key = st.secrets["firebase_key"]["api_key"]
+    except:
+        api_key = "your-local-api-key"  # for local testing
+    
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
     payload = {
         "email": email,
         "password": password,
         "returnSecureToken": True
     }
-
     response = requests.post(url, json=payload)
-
     return response
 
 def register_page():
