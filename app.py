@@ -11,9 +11,47 @@ import plotly.express as px
 
 # ── Page Config ──────────────────────────────────────
 st.set_page_config(
+    page_icon="logo.png",
     page_title = "Snakebite ASV Predictor",
     layout     = "wide"
 )
+
+st.markdown("""
+<style>
+
+/* Sidebar */
+[data-testid="stSidebar"]{
+    background:#0B3D2E;
+}
+
+[data-testid="stSidebar"] *{
+    color:white;
+}
+
+/* Navigation buttons */
+[data-testid="stSidebar"] .stButton>button{
+    width:100%;
+    border-radius:12px;
+    background:transparent;
+    border:1px solid rgba(255,255,255,0.15);
+    color:white;
+    font-weight:600;
+    transition:0.3s;
+}
+
+[data-testid="stSidebar"] .stButton>button:hover{
+    background:#1B5E49;
+    border-color:#1B5E49;
+    color:white;
+}
+
+/* Divider */
+[data-testid="stSidebar"] hr{
+    border-color:rgba(255,255,255,.18);
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 # ── Session State ────────────────────────────────────
 if "page"       not in st.session_state: st.session_state.page       = "login"
@@ -21,6 +59,7 @@ if "logged_in"  not in st.session_state: st.session_state.logged_in  = False
 if "user_email" not in st.session_state: st.session_state.user_email = ""
 if "user_name"  not in st.session_state: st.session_state.user_name  = ""
 if "user_id"    not in st.session_state: st.session_state.user_id    = ""
+if "registered" not in st.session_state: st.session_state.registered = False
 
 # ── Load Model ───────────────────────────────────────
 model        = joblib.load('asv_model.pkl')
@@ -91,38 +130,64 @@ def create_pdf(patient_name, gender, age_group, snake,
 
 # ── Sidebar ──────────────────────────────────────────
 def show_sidebar():
+
     with st.sidebar:
-        st.title("ASV Predictor")
+
+        col1, col2 = st.columns([1,3])
+
+        with col1:
+            st.image("logo.png", width=60)
+
+        with col2:
+
+            st.markdown("""
+            <div style="padding-top:5px;">
+                <div style="
+                    font-size:22px;
+                    font-weight:700;
+                    color:white;
+                    line-height:1;">
+                    Snakebite ASV Predictor
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         st.divider()
 
-        # User info
-        st.write(f"👤 **{st.session_state.user_name}**")
-        st.write(f"📧 {st.session_state.user_email}")
+        st.markdown(f"""
+        <div style="font-size:17px;font-weight:600;">
+        👤 {st.session_state.user_name}
+        </div>
+
+        <div style="font-size:14px;color:#d9d9d9;">
+        📧 {st.session_state.user_email}
+        </div>
+        """, unsafe_allow_html=True)
+
         st.divider()
 
-        # Navigation
-        st.subheader("Navigation")
+        st.markdown("### Navigation")
 
         if st.button("🔍 Predict", use_container_width=True):
-            st.session_state.page = "predict"
+            st.session_state.page="predict"
             st.rerun()
 
         if st.button("📊 Dashboard", use_container_width=True):
-            st.session_state.page = "dashboard"
+            st.session_state.page="dashboard"
             st.rerun()
 
         if st.button("📜 Prediction History", use_container_width=True):
-            st.session_state.page = "history"
+            st.session_state.page="history"
             st.rerun()
 
         st.divider()
 
         if st.button("🚪 Logout", use_container_width=True):
-            st.session_state.logged_in  = False
-            st.session_state.user_email = ""
-            st.session_state.user_name  = ""
-            st.session_state.user_id    = ""
-            st.session_state.page       = "login"
+            st.session_state.logged_in=False
+            st.session_state.user_email=""
+            st.session_state.user_name=""
+            st.session_state.user_id=""
+            st.session_state.page="login"
             st.rerun()
 
 # ── Login Page ───────────────────────────────────────
@@ -132,6 +197,9 @@ def login_page():
         st.title("Snakebite ASV Predictor")
         st.caption("AI-Based Clinical Decision Support System")
         st.divider()
+        if st.session_state.registered:
+            st.success("✅ Registration successful! Please login with your credentials.")
+            st.session_state.registered = False
         st.subheader("Login")
         email    = st.text_input("Email")
         password = st.text_input("Password", type="password")
@@ -186,7 +254,7 @@ def register_page():
                         "name" : name,
                         "email": email
                     })
-                    st.success("✅ Account created successfully! Please login.")
+                    st.session_state.registered = True
                     st.session_state.page = "login"
                     st.rerun()
                 except Exception as e:
@@ -336,7 +404,12 @@ def predict_page():
 def dashboard_page():
     show_sidebar()
     st.title("📊 Dashboard")
-    st.caption("Analytics of your predictions")
+    st.markdown(
+        f"""
+        ### Welcome back, {st.session_state.user_name}!
+        Monitor your prediction history and severity trends.
+        """
+    )
     st.divider()
 
     # Get all predictions of this user
@@ -354,10 +427,10 @@ def dashboard_page():
 
     # Metrics
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Predictions", len(df_hist))
-    col2.metric("High Severity",     len(df_hist[df_hist['severity'] == 'High']))
-    col3.metric("Moderate Severity", len(df_hist[df_hist['severity'] == 'Moderate']))
-    col4.metric("No ASV Needed",     len(df_hist[df_hist['severity'] == 'None']))
+    col1.metric("📋 Total Predictions", len(df_hist))
+    col2.metric("🚨 High Severity",     len(df_hist[df_hist['severity'] == 'High']))
+    col3.metric("⚠ Moderate Severity", len(df_hist[df_hist['severity'] == 'Moderate']))
+    col4.metric("✅ No ASV Needed",     len(df_hist[df_hist['severity'] == 'None']))
 
     st.divider()
 
@@ -373,11 +446,16 @@ def dashboard_page():
             values = 'Count',
             title  = 'Severity Distribution',
             color_discrete_map = {
-                'None'    : 'steelblue',
-                'Low'     : 'green',
-                'Moderate': 'orange',
-                'High'    : 'red'
+                'None'      : '#4CAF50',
+                'Low'       : '#8BC34A',
+                'Moderate'  : '#FFC107',
+                'High'      : '#F44336'
             }
+        )
+        fig.update_layout(
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(size=15)
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -391,15 +469,22 @@ def dashboard_page():
             y     = 'Count',
             title = 'Snake Types in Your Predictions',
             color = 'Count',
-            color_continuous_scale = 'Reds'
+            color_continuous_scale = 'Greens'
+        )
+        fig.update_layout(
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(size=15)
         )
         st.plotly_chart(fig2, use_container_width=True)
+
+        st.divider()
 
 # ── History Page ─────────────────────────────────────
 def history_page():
     show_sidebar()
     st.title("📜 Prediction History")
-    st.caption("Your last predictions")
+    st.markdown("View all your previous snakebite severity predictions.")
     st.divider()
 
     docs = db.collection("predictions")\
@@ -407,6 +492,7 @@ def history_page():
              .stream()
 
     records = [doc.to_dict() for doc in docs]
+    records.reverse()
 
     if not records:
         st.info("No prediction history found.")
