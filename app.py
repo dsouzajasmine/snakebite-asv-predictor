@@ -403,16 +403,16 @@ def predict_page():
 # ── Dashboard Page ───────────────────────────────────
 def dashboard_page():
     show_sidebar()
+
     st.title("📊 Dashboard")
     st.markdown(
         f"""
         ### Welcome back, {st.session_state.user_name}!
-        Monitor your prediction history and severity trends.
+        Monitor your prediction history, severity trends and patient statistics.
         """
     )
     st.divider()
 
-    # Get all predictions of this user
     docs = db.collection("predictions")\
              .where("user_email", "==", st.session_state.user_email)\
              .stream()
@@ -425,60 +425,168 @@ def dashboard_page():
 
     df_hist = pd.DataFrame(records)
 
-    # Metrics
+    # -------------------- Metrics --------------------
     col1, col2, col3, col4 = st.columns(4)
+
     col1.metric("📋 Total Predictions", len(df_hist))
-    col2.metric("🚨 High Severity",     len(df_hist[df_hist['severity'] == 'High']))
-    col3.metric("⚠ Moderate Severity", len(df_hist[df_hist['severity'] == 'Moderate']))
-    col4.metric("✅ No ASV Needed",     len(df_hist[df_hist['severity'] == 'None']))
+    col2.metric("🚨 High Severity",
+                len(df_hist[df_hist["severity"] == "High"]))
+    col3.metric("⚠ Moderate Severity",
+                len(df_hist[df_hist["severity"] == "Moderate"]))
+    col4.metric("✅ No ASV Needed",
+                len(df_hist[df_hist["severity"] == "None"]))
 
     st.divider()
+
+    # -------------------- Row 1 --------------------
 
     col1, col2 = st.columns(2)
 
     with col1:
-        # Severity pie chart
-        severity_counts = df_hist['severity'].value_counts().reset_index()
-        severity_counts.columns = ['Severity', 'Count']
+
+        severity_counts = df_hist["severity"].value_counts().reset_index()
+        severity_counts.columns = ["Severity", "Count"]
+
         fig = px.pie(
             severity_counts,
-            names  = 'Severity',
-            values = 'Count',
-            title  = 'Severity Distribution',
-            color_discrete_map = {
-                'None'      : '#4CAF50',
-                'Low'       : '#8BC34A',
-                'Moderate'  : '#FFC107',
-                'High'      : '#F44336'
+            names="Severity",
+            values="Count",
+            title="Severity Distribution",
+            color_discrete_map={
+                "None": "#4CAF50",
+                "Low": "#8BC34A",
+                "Moderate": "#FFC107",
+                "High": "#F44336"
             }
         )
+
         fig.update_layout(
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=dict(size=15)
         )
+
         st.plotly_chart(fig, use_container_width=True)
 
+        st.caption(
+            "Shows the proportion of predictions belonging to each severity category."
+        )
+
     with col2:
-        # Snake type bar chart
-        snake_counts = df_hist['snake'].value_counts().reset_index()
-        snake_counts.columns = ['Snake', 'Count']
+
+        snake_counts = df_hist["snake"].value_counts().reset_index()
+        snake_counts.columns = ["Snake", "Count"]
+
         fig2 = px.bar(
             snake_counts,
-            x     = 'Snake',
-            y     = 'Count',
-            title = 'Snake Types in Your Predictions',
-            color = 'Count',
-            color_continuous_scale = 'Greens'
+            x="Snake",
+            y="Count",
+            title="Snake Identification Frequency",
+            color="Count",
+            color_continuous_scale="Tealgrn"
         )
+
         fig2.update_layout(
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=dict(size=15)
         )
+
         st.plotly_chart(fig2, use_container_width=True)
 
-        st.divider()
+        st.caption(
+            "Displays how frequently each snake species has appeared in previous predictions."
+        )
+
+    st.divider()
+
+    # -------------------- Row 2 --------------------
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        asv_counts = df_hist["recommended_asv"].value_counts().reset_index()
+        asv_counts.columns = ["ASV", "Count"]
+
+        fig3 = px.bar(
+        asv_counts,
+        x="ASV",
+        y="Count",
+        title="Recommended ASV Distribution",
+        color="ASV",
+        color_discrete_map={
+            "0 vials": "#4CAF50",
+            "10–15 vials": "#8BC34A",
+            "20–30 vials": "#FFC107",
+            "35–55 vials": "#F44336"
+        }
+        )
+    
+        fig3.update_layout(
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(size=15)
+        )
+
+        st.plotly_chart(fig3, use_container_width=True)
+
+        st.caption(
+            "Shows the frequency of each recommended ASV dosage range."
+        )
+
+    with col2:
+
+        gender_counts = df_hist["gender"].value_counts().reset_index()
+        gender_counts.columns = ["Gender", "Count"]
+
+        fig4 = px.pie(
+            gender_counts,
+            names="Gender",
+            values="Count",
+            title="Gender Distribution",
+            color_discrete_sequence=px.colors.qualitative.Set2
+        )
+
+        fig4.update_layout(
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(size=15)
+        )
+
+        st.plotly_chart(fig4, use_container_width=True)
+
+        st.caption(
+            "Represents the gender distribution of patients in the prediction history."
+        )
+
+    st.divider()
+
+    # -------------------- Recent Activity --------------------
+
+    st.subheader("📝 Recent Prediction Activity")
+
+    display_df = df_hist[
+        [
+            "patient_name",
+            "snake",
+            "severity",
+            "recommended_asv"
+        ]
+    ].copy()
+
+    display_df.columns = [
+        "Patient",
+        "Snake",
+        "Severity",
+        "Recommended ASV"
+    ]
+
+    st.dataframe(
+        display_df.tail(5).iloc[::-1],
+        use_container_width=True,
+        hide_index=True
+    )
 
 # ── History Page ─────────────────────────────────────
 def history_page():
