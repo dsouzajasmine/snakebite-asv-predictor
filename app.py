@@ -471,7 +471,7 @@ def dashboard_page():
             color = 'Count',
             color_continuous_scale = 'Greens'
         )
-        fig.update_layout(
+        fig2.update_layout(
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=dict(size=15)
