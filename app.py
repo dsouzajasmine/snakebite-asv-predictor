@@ -59,6 +59,7 @@ if "logged_in"  not in st.session_state: st.session_state.logged_in  = False
 if "user_email" not in st.session_state: st.session_state.user_email = ""
 if "user_name"  not in st.session_state: st.session_state.user_name  = ""
 if "user_id"    not in st.session_state: st.session_state.user_id    = ""
+if "role"       not in st.session_state: st.session_state.role       = ""
 if "registered" not in st.session_state: st.session_state.registered = False
 
 # ── Load Model ───────────────────────────────────────
@@ -87,6 +88,32 @@ def get_api_key():
 def login_user(email, password):
     url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={get_api_key()}"
     payload = {"email": email, "password": password, "returnSecureToken": True}
+    return requests.post(url, json=payload)
+
+# ── Helper: Get User Role ─────────────────────────────
+def get_user_role(uid):
+    try:
+        doc = db.collection("users").document(uid).get()
+        if doc.exists:
+            return doc.to_dict().get("role", "doctor")
+        return "doctor"
+    except:
+        return "doctor"
+
+# ── Helper: Get User Status ───────────────────────────
+def get_user_status(uid):
+    try:
+        doc = db.collection("users").document(uid).get()
+        if doc.exists:
+            return doc.to_dict().get("status", "pending")
+        return "pending"
+    except:
+        return "pending"
+
+# ── Helper: Forgot Password ───────────────────────────
+def send_password_reset(email):
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={get_api_key()}"
+    payload = {"requestType": "PASSWORD_RESET", "email": email}
     return requests.post(url, json=payload)
 
 # ── Helper: Create PDF ───────────────────────────────
@@ -128,8 +155,8 @@ def create_pdf(patient_name, gender, age_group, snake,
     doc.build(elements)
     return pdf_file
 
-# ── Sidebar ──────────────────────────────────────────
-def show_sidebar():
+# ── Sidebar - Doctor ──────────────────────────────────────────
+def show_doctor_sidebar():
 
     with st.sidebar:
 
@@ -183,11 +210,47 @@ def show_sidebar():
         st.divider()
 
         if st.button("🚪 Logout", use_container_width=True):
-            st.session_state.logged_in=False
-            st.session_state.user_email=""
-            st.session_state.user_name=""
-            st.session_state.user_id=""
-            st.session_state.page="login"
+            for key in ["logged_in", "user_email", "user_name", "user_id", "role"]:
+                st.session_state[key] = "" if key != "logged_in" else False
+            st.session_state.page = "login"
+            st.rerun()
+
+# ── Sidebar — Admin ───────────────────────────────────
+def show_admin_sidebar():
+    with st.sidebar:
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.image("logo.png", width=60)
+        with col2:
+            st.markdown("""
+            <div style="padding-top:5px;">
+                <div style="font-size:18px;font-weight:700;color:white;line-height:1;">
+                    Snakebite ASV Predictor
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        st.divider()
+        st.markdown(f"""
+        <div style="font-size:17px;font-weight:600;">👤 {st.session_state.user_name or "Admin"}</div>
+        <div style="font-size:14px;color:#d9d9d9;">📧 {st.session_state.user_email}</div>
+        <div style="font-size:12px;color:#FFD700;margin-top:4px;">⭐ Admin</div>
+        """, unsafe_allow_html=True)
+        st.divider()
+        st.markdown("### Admin Panel")
+        if st.button("📋 Manage Doctors", use_container_width=True):
+            st.session_state.page = "admin_doctors"
+            st.rerun()
+        if st.button("📊 Hospital Dashboard", use_container_width=True):
+            st.session_state.page = "admin_dashboard"
+            st.rerun()
+        if st.button("📜 All Predictions", use_container_width=True):
+            st.session_state.page = "admin_predictions"
+            st.rerun()
+        st.divider()
+        if st.button("🚪 Logout", use_container_width=True):
+            for key in ["logged_in", "user_email", "user_name", "user_id", "role"]:
+                st.session_state[key] = "" if key != "logged_in" else False
+            st.session_state.page = "login"
             st.rerun()
 
 # ── Login Page ───────────────────────────────────────
@@ -205,23 +268,66 @@ def login_page():
         password = st.text_input("Password", type="password")
 
         if st.button("Login", use_container_width=True):
-            response = login_user(email, password)
-            if response.status_code == 200:
-                user = auth.get_user_by_email(email)
-                st.session_state.logged_in  = True
-                st.session_state.user_email = email
-                st.session_state.user_name  = user.display_name
-                st.session_state.user_id    = user.uid
-                st.session_state.page       = "predict"
-                st.success(f"Welcome, {user.display_name}!")
-                st.rerun()
+            if not email or not password:
+                st.error("Please enter email and password!")
             else:
-                st.error("Invalid Email or Password!")
+                response = login_user(email, password)
+                if response.status_code == 200:
+                    user   = auth.get_user_by_email(email)
+                    role   = get_user_role(user.uid)
+                    status = get_user_status(user.uid)
 
-        st.write("Don't have an account?")
-        if st.button("Register here", use_container_width=True):
-            st.session_state.page = "register"
+                    if role == "doctor" and status == "pending":
+                        st.warning("⏳ Your account is pending admin approval. Please wait.")
+                    elif role == "doctor" and status == "rejected":
+                        st.error("❌ Your account has been rejected. Please contact the hospital admin.")
+                    else:
+                        st.session_state.logged_in  = True
+                        st.session_state.user_email = email
+                        st.session_state.user_name  = user.display_name
+                        st.session_state.user_id    = user.uid
+                        st.session_state.role       = role
+                        st.session_state.page       = "predict" if role == "doctor" else "admin_doctors"
+                        st.success(f"Welcome, {user.display_name}!")
+                        st.rerun()
+                else:
+                    st.error("Invalid Email or Password!")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Register here", use_container_width=True):
+                st.session_state.page = "register"
+                st.rerun()
+        with col_b:
+            if st.button("Forgot Password?", use_container_width=True):
+                st.session_state.page = "forgot_password"
+                st.rerun()
+
+# ── Forgot Password Page ──────────────────────────────
+def forgot_password_page():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("Snakebite ASV Predictor")
+        st.caption("AI-Based Clinical Decision Support System")
+        st.divider()
+        st.subheader("Forgot Password")
+        st.write("Enter your registered email address. We will send you a password reset link.")
+        email = st.text_input("Registered Email")
+
+        if st.button("Send Reset Link", use_container_width=True):
+            if not email:
+                st.error("Please enter your email!")
+            else:
+                response = send_password_reset(email)
+                if response.status_code == 200:
+                    st.success("✅ Password reset link sent! Please check your email inbox.")
+                else:
+                    st.error("Email not found! Please check the email address and try again.")
+
+        if st.button("Back to Login", use_container_width=True):
+            st.session_state.page = "login"
             st.rerun()
+
 
 # ── Register Page ────────────────────────────────────
 def register_page():
@@ -230,13 +336,13 @@ def register_page():
         st.title("Snakebite ASV Predictor")
         st.caption("AI-Based Clinical Decision Support System")
         st.divider()
-        st.subheader("Create Account")
+        st.subheader("Doctor Registration")
         name             = st.text_input("Full Name")
         email            = st.text_input("Email")
         password         = st.text_input("Password", type="password")
         confirm_password = st.text_input("Confirm Password", type="password")
 
-        if st.button("Create Account", use_container_width=True):
+        if st.button("Register", use_container_width=True):
             if not name or not email or not password or not confirm_password:
                 st.error("Please fill all fields!")
             elif password != confirm_password:
@@ -252,7 +358,10 @@ def register_page():
                     )
                     db.collection("users").document(user.uid).set({
                         "name" : name,
-                        "email": email
+                        "email": email,
+                        "role": "doctor",
+                        "status": "pending",
+                        "registered_on": firestore.SERVER_TIMESTAMP
                     })
                     st.session_state.registered = True
                     st.session_state.page = "login"
@@ -264,9 +373,161 @@ def register_page():
             st.session_state.page = "login"
             st.rerun()
 
-# ── Predict Page ─────────────────────────────────────
+# ── Admin: Manage Doctors Page ────────────────────────
+def admin_doctors_page():
+    show_admin_sidebar()
+    st.title("📋 Manage Doctors")
+    st.caption("Approve or reject doctor registrations")
+    st.divider()
+
+    # Get all doctors
+    docs = db.collection("users").where("role", "==", "doctor").stream()
+    doctors = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+
+    pending  = [d for d in doctors if d.get("status") == "pending"]
+    approved = [d for d in doctors if d.get("status") == "approved"]
+    rejected = [d for d in doctors if d.get("status") == "rejected"]
+
+    # Metrics
+    col1, col2, col3 = st.columns(3)
+    col1.metric("⏳ Pending Approval", len(pending))
+    col2.metric("✅ Approved Doctors", len(approved))
+    col3.metric("❌ Rejected", len(rejected))
+    st.divider()
+
+    # Pending doctors
+    st.subheader("⏳ Pending Approval")
+    if not pending:
+        st.info("No pending registrations!")
+    else:
+        for doc in pending:
+            with st.expander(f"👤 {doc.get('name', 'N/A')} — {doc.get('email', 'N/A')}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Name:** {doc.get('name', 'N/A')}")
+                    st.write(f"**Email:** {doc.get('email', 'N/A')}")
+                    if doc.get('registered_on'):
+                        st.write(f"**Registered On:** {doc.get('registered_on')}")
+                with col2:
+                    if st.button(f"✅ Approve", key=f"approve_{doc['id']}"):
+                        db.collection("users").document(doc['id']).update({"status": "approved"})
+                        st.success(f"✅ {doc.get('name')} approved!")
+                        st.rerun()
+                    if st.button(f"❌ Reject", key=f"reject_{doc['id']}"):
+                        db.collection("users").document(doc['id']).update({"status": "rejected"})
+                        st.error(f"❌ {doc.get('name')} rejected!")
+                        st.rerun()
+
+    st.divider()
+
+    # Approved doctors
+    st.subheader("✅ Approved Doctors")
+    if not approved:
+        st.info("No approved doctors yet!")
+    else:
+        for doc in approved:
+            with st.expander(f"👤 {doc.get('name', 'N/A')} — {doc.get('email', 'N/A')}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Name:** {doc.get('name', 'N/A')}")
+                    st.write(f"**Email:** {doc.get('email', 'N/A')}")
+                    if doc.get('registered_on'):
+                        st.write(f"**Registered On:** {doc.get('registered_on')}")
+                with col2:
+                    if st.button(f"🚫 Revoke Access", key=f"revoke_{doc['id']}"):
+                        db.collection("users").document(doc['id']).update({"status": "rejected"})
+                        st.warning(f"Access revoked for {doc.get('name')}!")
+                        st.rerun()
+
+# ── Admin: Hospital Dashboard ─────────────────────────
+def admin_dashboard_page():
+    show_admin_sidebar()
+    st.title("📊 Hospital Dashboard")
+    st.caption("Overall hospital statistics and analytics")
+    st.divider()
+
+    # Get all predictions
+    all_preds = [doc.to_dict() for doc in db.collection("predictions").stream()]
+    all_doctors = [doc.to_dict() for doc in db.collection("users").where("role", "==", "doctor").stream()]
+
+    if not all_preds:
+        st.info("No predictions made yet!")
+        return
+
+    df_all = pd.DataFrame(all_preds)
+
+    # Metrics
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("🏥 Total Predictions", len(df_all))
+    col2.metric("👨‍⚕️ Total Doctors", len(all_doctors))
+    col3.metric("🚨 High Severity Cases", len(df_all[df_all['severity'] == 'High']))
+    col4.metric("✅ No ASV Needed", len(df_all[df_all['severity'] == 'None']))
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        severity_counts = df_all['severity'].value_counts().reset_index()
+        severity_counts.columns = ['Severity', 'Count']
+        fig = px.pie(
+            severity_counts,
+            names='Severity', values='Count',
+            title='Hospital-wide Severity Distribution',
+            color_discrete_map={
+                'None': '#4CAF50', 'Low': '#8BC34A',
+                'Moderate': '#FFC107', 'High': '#F44336'
+            }
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        snake_counts = df_all['snake'].value_counts().reset_index()
+        snake_counts.columns = ['Snake', 'Count']
+        fig2 = px.bar(
+            snake_counts, x='Snake', y='Count',
+            title='Snake Types — All Cases',
+            color='Count', color_continuous_scale='Greens'
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+# ── Admin: All Predictions Page ───────────────────────
+def admin_predictions_page():
+    show_admin_sidebar()
+    st.title("📜 All Predictions")
+    st.caption("All predictions made by all doctors")
+    st.divider()
+
+    docs    = db.collection("predictions").stream()
+    records = [doc.to_dict() for doc in docs]
+    records.reverse()
+
+    if not records:
+        st.info("No predictions found!")
+        return
+
+    st.write(f"**Total Predictions: {len(records)}**")
+    st.divider()
+
+    for i, data in enumerate(records, 1):
+        with st.expander(f"Prediction {i} — Dr. {data.get('user_name', 'N/A')} — {data.get('snake', 'N/A')} — Severity: {data.get('severity', 'N/A')}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Doctor:** {data.get('user_name', 'N/A')}")
+                st.write(f"**Doctor Email:** {data.get('user_email', 'N/A')}")
+                st.write(f"**Patient:** {data.get('patient_name', 'Not provided')}")
+                st.write(f"**Gender:** {data.get('gender', 'N/A')}")
+                st.write(f"**Age Group:** {data.get('age_group', 'N/A')}")
+                st.write(f"**Snake:** {data.get('snake', 'N/A')}")
+            with col2:
+                st.write(f"**Severity:** {data.get('severity', 'N/A')}")
+                st.write(f"**Recommended ASV:** {data.get('recommended_asv', 'N/A')}")
+                st.write(f"**WBCT:** {data.get('wbct', 'N/A')}")
+                if data.get('timestamp'):
+                    st.write(f"**Date:** {data.get('timestamp')}")
+
+# ── Doctor: Predict Page ──────────────────────────────
 def predict_page():
-    show_sidebar()
+    show_doctor_sidebar()
     st.title("🔍 ASV Severity Prediction")
     st.caption("Enter patient details to predict ASV severity")
     st.divider()
@@ -338,7 +599,6 @@ def predict_page():
         st.header("Prediction Result")
 
         col1, col2 = st.columns(2)
-
         with col1:
             if result == 'None':
                 st.success(f"### Predicted Severity: {result}")
@@ -383,7 +643,6 @@ def predict_page():
 
         st.success("✅ Prediction saved to history!")
 
-        # PDF Download
         pdf_path = create_pdf(
             patient_name, gender, age_cat, snake,
             hb, platelets, pt, inr, aptt, urea,
@@ -392,17 +651,16 @@ def predict_page():
         )
         with open(pdf_path, "rb") as pdf_file:
             st.download_button(
-                label     = "📄 Download Prediction Report",
-                data      = pdf_file,
-                file_name = "Snakebite_ASV_Report.pdf",
-                mime      = "application/pdf"
+                label="📄 Download Prediction Report",
+                data=pdf_file,
+                file_name="Snakebite_ASV_Report.pdf",
+                mime="application/pdf"
             )
-
         st.caption("⚠️ This is a decision support tool only. Final dosage must be determined by a qualified physician.")
 
-# ── Dashboard Page ───────────────────────────────────
+# ── Doctor - Dashboard Page ───────────────────────────────────
 def dashboard_page():
-    show_sidebar()
+    show_doctor_sidebar()
 
     st.title("📊 Dashboard")
     st.markdown(
@@ -588,9 +846,9 @@ def dashboard_page():
         hide_index=True
     )
 
-# ── History Page ─────────────────────────────────────
+# ── Doctoe - History Page ─────────────────────────────────────
 def history_page():
-    show_sidebar()
+    show_doctor_sidebar()
     st.title("📜 Prediction History")
     st.markdown("View all your previous snakebite severity predictions.")
     st.divider()
@@ -625,14 +883,28 @@ def history_page():
 if not st.session_state.logged_in:
     if st.session_state.page == "register":
         register_page()
+    elif st.session_state.page == "forgot_password":
+        forgot_password_page()
     else:
         login_page()
 else:
-    if st.session_state.page == "predict":
-        predict_page()
-    elif st.session_state.page == "dashboard":
-        dashboard_page()
-    elif st.session_state.page == "history":
-        history_page()
+    role = st.session_state.role
+
+    if role == "admin":
+        if st.session_state.page == "admin_doctors":
+            admin_doctors_page()
+        elif st.session_state.page == "admin_dashboard":
+            admin_dashboard_page()
+        elif st.session_state.page == "admin_predictions":
+            admin_predictions_page()
+        else:
+            admin_doctors_page()
     else:
-        predict_page()
+        if st.session_state.page == "predict":
+            predict_page()
+        elif st.session_state.page == "dashboard":
+            dashboard_page()
+        elif st.session_state.page == "history":
+            history_page()
+        else:
+            predict_page()
